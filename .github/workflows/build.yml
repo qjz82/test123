@@ -32,7 +32,7 @@ jobs:
           - official
           - modified
     steps:
-      - name: Checkout builder repo (contains workflow + patch)
+      - name: Checkout builder repo (contains workflow + patched source)
         uses: actions/checkout@v4
         with:
           path: builder
@@ -61,11 +61,13 @@ jobs:
           cd src
           git submodule update --init --recursive
 
-      - name: Apply offline + click-toggle patch (modified only)
+      - name: Apply modified source (copy pre-patched files, modified only)
         if: ${{ matrix.variant == 'modified' }}
         run: |
-          cd src
-          git apply --verbose ../builder/translator-offline-toggle.patch
+          cp -f "builder/patched/app/src/main/java/com/gameocr/app/overlay/OverlayManager.kt" \
+                 "src/app/src/main/java/com/gameocr/app/overlay/OverlayManager.kt"
+          cp -f "builder/patched/app/src/main/java/com/gameocr/app/data/Settings.kt" \
+                 "src/app/src/main/java/com/gameocr/app/data/Settings.kt"
 
       - name: Build debug APK
         run: |
