@@ -1,0 +1,127 @@
+diff --git a/app/src/main/java/com/gameocr/app/data/Settings.kt b/app/src/main/java/com/gameocr/app/data/Settings.kt
+index 8edaaf8..6f78b01 100644
+--- a/app/src/main/java/com/gameocr/app/data/Settings.kt
++++ b/app/src/main/java/com/gameocr/app/data/Settings.kt
+@@ -112,7 +112,7 @@ data class Settings(
+     val orientationModelMirrorUrl: String = "",
+     val preferShizukuCapture: Boolean = false,
+     val a11yVolumeTrigger: Boolean = false,
+-    val translatorEngine: TranslatorEngine = TranslatorEngine.OPENAI,
++    val translatorEngine: TranslatorEngine = TranslatorEngine.LOCAL_HY_MT2,
+     val translationGlossaryEnabled: Boolean = true,
+     val foregroundAppDetectionMode: ForegroundAppDetectionMode = ForegroundAppDetectionMode.AUTO,
+     val sendAppNameToTranslator: Boolean = false,
+@@ -383,7 +383,7 @@ data class TranslationPreset(
+     val overlayAvoidCollision: Boolean = true,
+     val streamingTranslate: Boolean = true,
+     val retryEmptyTranslation: Boolean = false,
+-    val translatorEngine: TranslatorEngine = TranslatorEngine.OPENAI,
++    val translatorEngine: TranslatorEngine = TranslatorEngine.LOCAL_HY_MT2,
+     val deeplPro: Boolean = false,
+     val deeplProtocol: DeeplProtocol = DeeplProtocol.OFFICIAL,
+     val deeplBaseUrl: String = "",
+diff --git a/app/src/main/java/com/gameocr/app/overlay/OverlayManager.kt b/app/src/main/java/com/gameocr/app/overlay/OverlayManager.kt
+index df08cc3..195088a 100644
+--- a/app/src/main/java/com/gameocr/app/overlay/OverlayManager.kt
++++ b/app/src/main/java/com/gameocr/app/overlay/OverlayManager.kt
+@@ -86,6 +86,10 @@ class OverlayManager(
+     private val blockContents = mutableMapOf<Int, TranslationBlockContent>()
+     private var blocksDiagnosticId: Long? = null
+ 
++    /** 点击悬浮切换按钮时翻转：true=隐藏译文块（露出原屏），false=显示译文。 */
++    @Volatile var blocksHidden: Boolean = false
++    private var toggleButtonView: View? = null
++
+     private data class TranslationBlockContent(
+         val source: String,
+         var translation: String,
+@@ -831,6 +835,8 @@ class OverlayManager(
+             .onSuccess { VerticalDiagnosticLog.i("${diagPrefix}overlay window added host=$host") }
+             .onFailure { VerticalDiagnosticLog.w(it, "${diagPrefix}overlay window add failed host=$host") }
+         blocksView = root
++        if (blocksHidden) blockViews.values.forEach { it.visibility = View.GONE }
++        ensureToggleButton()
+     }
+ 
+     private fun showBlocksInActionModeDialog(
+@@ -1075,6 +1081,7 @@ class OverlayManager(
+             blocksView?.let { runCatching { wm.removeView(it) } }
+         }
+         blocksView = null
++        removeToggleButton()
+         blockViews.clear()
+         blockContents.clear()
+         blocksDiagnosticId = null
+@@ -1173,4 +1180,72 @@ class OverlayManager(
+     }
+ }
+ 
++    /** 屏幕右上角常驻"译/原"切换按钮，约 44dp 见方。 */
++    private fun ensureToggleButton() {
++        if (toggleButtonView != null) return
++        val density = context.resources.displayMetrics.density
++        val size = (44 * density).toInt()
++        val label = TextView(context).apply {
++            text = if (blocksHidden) "原" else "译"
++            setTextColor(0xFFFFFFFF.toInt())
++            textSize = 16f
++            gravity = Gravity.CENTER
++        }
++        val container = FrameLayout(context).apply {
++            background = GradientDrawable().apply {
++                cornerRadius = 999f
++                setColor(0xC0000000.toInt())
++            }
++            addView(
++                label,
++                FrameLayout.LayoutParams(
++                    FrameLayout.LayoutParams.WRAP_CONTENT,
++                    FrameLayout.LayoutParams.WRAP_CONTENT,
++                ).apply { gravity = Gravity.CENTER },
++            )
++            setPadding(
++                (10 * density).toInt(),
++                (6 * density).toInt(),
++                (10 * density).toInt(),
++                (6 * density).toInt(),
++            )
++        }
++        container.setOnClickListener {
++            val hidden = toggleTranslationBlocks()
++            label.text = if (hidden) "原" else "译"
++        }
++        val params = WindowManager.LayoutParams(
++            size, size,
++            overlayType,
++            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
++                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
++                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
++            PixelFormat.TRANSLUCENT,
++        ).apply {
++            gravity = Gravity.TOP or Gravity.END
++            x = (12 * density).toInt()
++            y = (12 * density).toInt()
++            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
++                layoutInDisplayCutoutMode =
++                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
++            }
++        }
++        runCatching { wm.addView(container, params) }
++        toggleButtonView = container
++    }
++
++    /** 翻转译文块可见性；返回翻转后的 blocksHidden（true=已隐藏/显示原文）。 */
++    fun toggleTranslationBlocks(): Boolean {
++        blocksHidden = !blocksHidden
++        for (v in blockViews.values) {
++            v.visibility = if (blocksHidden) View.GONE else View.VISIBLE
++        }
++        return blocksHidden
++    }
++
++    private fun removeToggleButton() {
++        toggleButtonView?.let { runCatching { wm.removeView(it) } }
++        toggleButtonView = null
++    }
++
+ internal fun cutoutModeLogLabel(mode: Int?): String = mode?.toString() ?: "unsupported"
