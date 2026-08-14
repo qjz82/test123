@@ -1,0 +1,79 @@
+name: Build Screen Translator APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      variant:
+        description: "Build which variant (official=原版, modified=改版, both=两份都构建)"
+        required: false
+        default: "both"
+        type: choice
+        options:
+          - both
+          - official
+          - modified
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.variant }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        variant:
+          - official
+          - modified
+    steps:
+      - name: Checkout builder repo (contains workflow + patch)
+        uses: actions/checkout@v4
+        with:
+          path: builder
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install SDK packages (SDK35 / NDK 26.1 / CMake 3.22.1)
+        run: |
+          sdkmanager --install \
+            "platforms;android-35" \
+            "build-tools;35.0.0" \
+            "ndk;26.1.10909125" \
+            "cmake;3.22.1"
+          yes | sdkmanager --licenses
+
+      - name: Clone overlay-translator source + submodules (server-side, runner network)
+        run: |
+          git clone --depth 1 https://github.com/ab9986/overlay-translator.git src
+          cd src
+          git submodule update --init --recursive
+
+      - name: Apply offline + click-toggle patch (modified only)
+        if: ${{ matrix.variant == 'modified' }}
+        run: |
+          cd src
+          git apply --verbose ../builder/translator-offline-toggle.patch
+
+      - name: Build debug APK
+        run: |
+          cd src
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: screen-translator-${{ matrix.variant }}-apk
+          path: src/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
